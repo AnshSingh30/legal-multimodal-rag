@@ -27,6 +27,10 @@ class Citation(BaseModel):
     page_number: Any
     bbox: Optional[list[float]] = None
     chunk_text: str
+    # "text" = native PDF extraction, bbox in PDF point space (matches pdf.js/react-pdf's
+    # viewport directly). "ocr" = Tesseract, bbox in pixel space at the 300dpi render used
+    # for OCR — the frontend must scale by 72/300 to overlay on a normally-rendered PDF page.
+    method: Optional[str] = None
 
 
 class QueryResponse(BaseModel):

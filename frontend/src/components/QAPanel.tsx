@@ -9,7 +9,13 @@ import CitationList from "./CitationList";
 
 type Status = "idle" | "asking" | "done" | "error";
 
-export default function QAPanel({ docId }: { docId: string | null }) {
+export default function QAPanel({
+  docId,
+  onResult,
+}: {
+  docId: string | null;
+  onResult?: (result: QueryResponse) => void;
+}) {
   const [question, setQuestion] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -23,6 +29,7 @@ export default function QAPanel({ docId }: { docId: string | null }) {
       const response = await queryDocument({ question, doc_id: docId });
       setResult(response);
       setStatus("done");
+      onResult?.(response);
     } catch (err) {
       setStatus("error");
       setError(err instanceof ApiError ? err.message : "Failed to get an answer.");

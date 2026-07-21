@@ -1,6 +1,7 @@
 import difflib
 import hashlib
-from typing import Any
+import pathlib
+from typing import Any, Optional
 
 from langchain_chroma import Chroma
 
@@ -14,6 +15,22 @@ def compute_doc_id(filename: str) -> str:
 
 def compute_content_hash(contents: bytes) -> str:
     return hashlib.sha256(contents).hexdigest()
+
+
+def get_filename_for_doc(vectorstore: Chroma, doc_id: str) -> Optional[str]:
+    """The original filename for a doc_id, taken from any of its chunks
+    (all versions share the same filename by construction — see compute_doc_id).
+    None if no chunks exist for this doc_id at all.
+
+    rag/ingestion.py's extractors store "source" as the full save path (e.g.
+    "uploads/foo.pdf"), not the bare filename — .name strips that back down
+    so callers can safely join it under their own upload directory without
+    ending up with a doubled "uploads/uploads/foo.pdf"."""
+    result = vectorstore._collection.get(where={"doc_id": doc_id}, include=["metadatas"], limit=1)
+    if not result["metadatas"]:
+        return None
+    source = result["metadatas"][0].get("source")
+    return pathlib.Path(source).name if source else None
 
 
 def get_latest_version(vectorstore: Chroma, doc_id: str) -> int:

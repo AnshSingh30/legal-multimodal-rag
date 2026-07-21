@@ -24,6 +24,7 @@ export interface Citation {
   page_number: unknown;
   bbox: [number, number, number, number] | null;
   chunk_text: string;
+  method: "text" | "ocr" | null;
 }
 
 export type Confidence = "high" | "medium" | "low";

@@ -6,6 +6,7 @@ from typing import Optional
 from fastapi import FastAPI, Header, HTTPException, Query, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from langchain_core.documents import Document
 
 from rag.cache import get_cached_query, query_cache_key, set_cached_query
@@ -20,6 +21,7 @@ from rag.versioning import (
     compute_doc_id,
     diff_versions,
     get_chunks_for_version,
+    get_filename_for_doc,
     get_latest_version,
     list_versions,
 )
@@ -99,18 +101,21 @@ async def health() -> HealthResponse:
 
 @app.post("/ingest", response_model=IngestResponse)
 async def ingest(file: UploadFile) -> IngestResponse:
-    ext = pathlib.Path(file.filename).suffix.lower()
+    # file.filename is attacker-controlled — strip any path components (e.g. "../../etc/passwd")
+    # so it can't escape UPLOAD_DIR. Do this before anything derives from it.
+    filename = pathlib.Path(file.filename).name
+    ext = pathlib.Path(filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported file extension '{ext}'. Allowed: {sorted(ALLOWED_EXTENSIONS)}",
         )
 
-    save_path = UPLOAD_DIR / file.filename
+    save_path = UPLOAD_DIR / filename
     contents = await file.read()
     save_path.write_bytes(contents)
 
-    doc_id = compute_doc_id(file.filename)
+    doc_id = compute_doc_id(filename)
     content_hash = compute_content_hash(contents)
     vectorstore = vectorstore_state.get_vectorstore()
     version = await run_in_threadpool(get_latest_version, vectorstore, doc_id) + 1
@@ -128,7 +133,7 @@ async def ingest(file: UploadFile) -> IngestResponse:
     docs = await run_in_threadpool(_ingest_and_index)
     vectorstore_state.invalidate()
 
-    return IngestResponse(doc_id=doc_id, filename=file.filename, chunks_indexed=len(docs), document_version=version)
+    return IngestResponse(doc_id=doc_id, filename=filename, chunks_indexed=len(docs), document_version=version)
 
 
 @app.get("/documents/{doc_id}/versions", response_model=list[VersionInfo])
@@ -138,6 +143,24 @@ async def document_versions(doc_id: str) -> list[dict]:
     if not versions:
         raise HTTPException(status_code=404, detail=f"No versions found for doc_id '{doc_id}'.")
     return versions
+
+
+@app.get("/documents/{doc_id}/file")
+async def document_file(doc_id: str) -> FileResponse:
+    """Serves the ingested file's current bytes on disk — i.e. whatever was
+    last ingested under this doc_id's filename, not necessarily the specific
+    version a citation refers to (see rag/versioning.py: only chunk metadata
+    is versioned, not the physical file)."""
+    vectorstore = vectorstore_state.get_vectorstore()
+    filename = await run_in_threadpool(get_filename_for_doc, vectorstore, doc_id)
+    if filename is None:
+        raise HTTPException(status_code=404, detail=f"No document found for doc_id '{doc_id}'.")
+
+    save_path = (UPLOAD_DIR / filename).resolve()
+    if UPLOAD_DIR.resolve() not in save_path.parents or not save_path.is_file():
+        raise HTTPException(status_code=404, detail=f"File for doc_id '{doc_id}' not found on disk.")
+
+    return FileResponse(save_path, filename=filename)
 
 
 @app.get("/documents/{doc_id}/diff", response_model=DiffResponse)
@@ -211,6 +234,7 @@ async def query(payload: QueryRequest, response: Response) -> QueryResponse:
             page_number=doc.metadata.get("page", "?"),
             bbox=doc.metadata.get("bbox"),
             chunk_text=doc.page_content,
+            method=doc.metadata.get("method"),
         )
         for doc in result["citations"]
     ]
