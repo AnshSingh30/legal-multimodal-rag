@@ -49,3 +49,10 @@ def test_query_sample_csv() -> None:
     query_body = query_response.json()
     assert query_body["answer"].strip() != ""
     assert len(query_body["source_documents"]) > 0
+
+    # Citations must be grounded in the document we actually ingested and reference a real page.
+    assert len(query_body["citations"]) > 0
+    for citation in query_body["citations"]:
+        assert citation["doc_id"] == doc_id
+        assert citation["page_number"] is not None
+        assert citation["chunk_text"].strip() != ""

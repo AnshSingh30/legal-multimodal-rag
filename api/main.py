@@ -10,7 +10,7 @@ from rag.embedding import build_vectorstore
 from rag.generation import ask
 from rag.ingestion import smart_extract
 
-from api.schemas import HealthResponse, IngestResponse, QueryRequest, QueryResponse, SourceDocument
+from api.schemas import Citation, HealthResponse, IngestResponse, QueryRequest, QueryResponse, SourceDocument
 from api.state import vectorstore_state
 
 UPLOAD_DIR = pathlib.Path("./uploads")
@@ -73,12 +73,23 @@ async def query(payload: QueryRequest) -> QueryResponse:
         for doc in result["source_documents"]
     ]
 
+    citations = [
+        Citation(
+            doc_id=doc.metadata.get("doc_id", "unknown"),
+            page_number=doc.metadata.get("page", "?"),
+            bbox=doc.metadata.get("bbox"),
+            chunk_text=doc.page_content,
+        )
+        for doc in result["citations"]
+    ]
+
     chart_fig = result.get("chart")
     chart_json = chart_fig.to_plotly_json() if chart_fig is not None else None
 
     return QueryResponse(
         answer=result["answer"],
         source_documents=source_documents,
+        citations=citations,
         chart=chart_json,
         chart_type=result.get("chart_type"),
         chart_reason=result.get("chart_reason"),

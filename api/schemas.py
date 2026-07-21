@@ -20,9 +20,17 @@ class SourceDocument(BaseModel):
     chunk_text: str
 
 
+class Citation(BaseModel):
+    doc_id: str
+    page_number: Any
+    bbox: Optional[list[float]] = None
+    chunk_text: str
+
+
 class QueryResponse(BaseModel):
     answer: str
     source_documents: list[SourceDocument]
+    citations: list[Citation]
     chart: Optional[dict] = None
     chart_type: Optional[str] = None
     chart_reason: Optional[str] = None
