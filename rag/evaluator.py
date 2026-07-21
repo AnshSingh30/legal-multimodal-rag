@@ -46,13 +46,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from pipeline.ingest import smart_extract
-from pipeline.chunker import chunk_pages
-from pipeline.embedder import build_vectorstore, embedder
-from pipeline.retriever import build_retriever
-from pipeline.generator import ask, _get_llm
+from rag.ingestion import smart_extract
+from rag.chunking import chunk_pages
+from rag.embedding import build_vectorstore, embedder
+from rag.retrieval import build_retriever
+from rag.generation import ask, _get_llm
 
-def run():
+def run() -> None:
     print("Extracting and chunking...")
     pages = smart_extract("test_sample.csv")
     docs = chunk_pages(pages)

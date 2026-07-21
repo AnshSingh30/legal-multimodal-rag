@@ -1,12 +1,17 @@
 import os
-from langchain_openai import ChatOpenAI
+from typing import Any, Optional
+
+import plotly.graph_objects as go
+from langchain_core.documents import Document
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.runnables import Runnable, RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
+from langchain_openai import ChatOpenAI
 
 DEFAULT_MODEL = "cohere/north-mini-code:free"
 
-def _get_llm():
+def _get_llm() -> ChatOpenAI:
     """Build LLM lazily so env vars from dotenv are guaranteed to be loaded."""
     model = os.getenv("OPENROUTER_MODEL", DEFAULT_MODEL)
     api_key = os.getenv("OPENROUTER_API_KEY")
@@ -36,7 +41,7 @@ prompt = ChatPromptTemplate.from_messages([
     ("human", "Context:\n{context}\n\nQuestion: {question}")
 ])
 
-def format_docs(docs):
+def format_docs(docs: list[Document]) -> str:
     parts = []
     for d in docs:
         src = d.metadata.get("source", "unknown")
@@ -45,7 +50,7 @@ def format_docs(docs):
     return "\n\n---\n\n".join(parts)
 
 # FIX 2: LCEL chain — no deprecated QA chain classes
-def build_chain(retriever):
+def build_chain(retriever: BaseRetriever) -> Runnable:
     llm = _get_llm()
     return (
         {
@@ -57,8 +62,8 @@ def build_chain(retriever):
         | StrOutputParser()
     )
 
-from pipeline.chart_detector import detect_chart_need
-from pipeline.chart_generator import generate_chart
+from rag.chart_detector import detect_chart_need
+from rag.chart_generator import generate_chart
 
 CRITIQUE_PROMPT = """You are a strict fact-checker. 
 Review the following "Initial Answer" to the "Question", checking it against the "Context".
@@ -78,7 +83,7 @@ Final Faithfully Corrected Answer:"""
 
 critique_prompt = ChatPromptTemplate.from_template(CRITIQUE_PROMPT)
 
-def ask(question: str, retriever) -> dict:
+def ask(question: str, retriever: BaseRetriever) -> dict[str, Any]:
     chain = build_chain(retriever)
     # Retrieve docs separately so we can return them alongside the answer
     docs = retriever.invoke(question)
@@ -103,12 +108,10 @@ def ask(question: str, retriever) -> dict:
     chart_type = chart_info.get("chart_type", "none")
     chart_reason = chart_info.get("reason", "")
     
-    chart_fig = None
+    chart_fig: Optional[go.Figure] = None
     if needs_chart and chart_type != "none":
-        import streamlit as st
-        with st.spinner("Generating chart..."):
-            chart_fig = generate_chart(final_answer, chart_type, context_str)
-        
+        chart_fig = generate_chart(final_answer, chart_type, context_str)
+
     return {
         "answer": final_answer, 
         "source_documents": docs,

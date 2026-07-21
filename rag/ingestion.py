@@ -20,7 +20,7 @@ def extract_text_with_ocr(pdf_path: str) -> list[dict]:
                        "source": pdf_path, "method": "ocr"})
     return pages
 
-from pipeline.tabular_ingest import extract_tabular_data
+from rag.tabular_ingest import extract_tabular_data
 import pathlib
 import docx
 

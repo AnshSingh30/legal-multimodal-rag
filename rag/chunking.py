@@ -1,6 +1,7 @@
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_core.documents import Document
 from datetime import date
+
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 def chunk_pages(pages: list[dict]) -> list[Document]:
     splitter = RecursiveCharacterTextSplitter(

@@ -6,13 +6,13 @@ import sys
 load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from pipeline.ingest import smart_extract
-from pipeline.chunker import chunk_pages
-from pipeline.embedder import build_vectorstore
-from pipeline.retriever import build_retriever
-from pipeline.generator import ask
+from rag.ingestion import smart_extract
+from rag.chunking import chunk_pages
+from rag.embedding import build_vectorstore
+from rag.retrieval import build_retriever
+from rag.generation import ask
 
-def test_csv():
+def test_csv() -> None:
     print("--- TESTING CSV ---")
     pages = smart_extract("test_sample.csv")
     docs = chunk_pages(pages)

@@ -1,8 +1,10 @@
-import os
 import json
+import os
+from typing import Optional
+
 import plotly.graph_objects as go
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
 
 SYSTEM_PROMPT = """You are a data extraction assistant. Given a RAG answer and source context,
 extract the structured data needed to build a chart.
@@ -21,7 +23,7 @@ Respond ONLY with valid JSON:
 If you cannot extract numeric data, respond: {{"error": "no_numeric_data"}}
 """
 
-def generate_chart(answer: str, chart_type: str, context: str):
+def generate_chart(answer: str, chart_type: str, context: str) -> Optional[go.Figure]:
     model = os.getenv("OPENROUTER_MODEL", "cohere/north-mini-code:free")
     llm = ChatOpenAI(
         base_url="https://openrouter.ai/api/v1",
