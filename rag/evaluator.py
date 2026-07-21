@@ -1,3 +1,7 @@
+from rag._ragas_compat import ensure_ragas_importable
+
+ensure_ragas_importable()
+
 from ragas import evaluate
 from ragas.metrics import faithfulness, answer_relevancy, context_recall
 from datasets import Dataset   # FIX: must use HuggingFace Dataset object
@@ -32,15 +36,9 @@ def evaluate_pipeline(pipeline_ask_fn, retriever, qa_pairs: list[dict], llm, emb
     ], llm=llm, embeddings=embeddings, raise_exceptions=False)
     return scores
 import os
-import json
 import sys
-import types
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Monkey-patch to fix Ragas v0.1 import bug with newer langchain_community
-sys.modules['langchain_community.chat_models.vertexai'] = types.ModuleType('langchain_community.chat_models.vertexai')
-sys.modules['langchain_community.chat_models.vertexai'].ChatVertexAI = type('ChatVertexAI', (object,), {})
 
 from dotenv import load_dotenv
 

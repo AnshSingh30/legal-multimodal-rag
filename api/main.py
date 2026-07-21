@@ -6,6 +6,7 @@ from fastapi.concurrency import run_in_threadpool
 from langchain_core.documents import Document
 
 from rag.chunking import chunk_pages
+from rag.confidence import apply_confidence
 from rag.embedding import build_vectorstore
 from rag.generation import ask
 from rag.ingestion import smart_extract
@@ -64,6 +65,12 @@ async def query(payload: QueryRequest) -> QueryResponse:
 
     result = await run_in_threadpool(ask, payload.question, retriever)
 
+    contexts = [doc.page_content for doc in result["source_documents"]]
+    final_answer, confidence, _score = await run_in_threadpool(
+        apply_confidence, payload.question, result["answer"], contexts
+    )
+    abstained = final_answer != result["answer"]
+
     source_documents = [
         SourceDocument(
             source=doc.metadata.get("source", "unknown"),
@@ -73,7 +80,9 @@ async def query(payload: QueryRequest) -> QueryResponse:
         for doc in result["source_documents"]
     ]
 
-    citations = [
+    # An abstained answer supersedes the discarded one, so don't attach citations
+    # or a chart that were only ever grounded in the answer we just threw away.
+    citations = [] if abstained else [
         Citation(
             doc_id=doc.metadata.get("doc_id", "unknown"),
             page_number=doc.metadata.get("page", "?"),
@@ -83,14 +92,15 @@ async def query(payload: QueryRequest) -> QueryResponse:
         for doc in result["citations"]
     ]
 
-    chart_fig = result.get("chart")
+    chart_fig = None if abstained else result.get("chart")
     chart_json = chart_fig.to_plotly_json() if chart_fig is not None else None
 
     return QueryResponse(
-        answer=result["answer"],
+        answer=final_answer,
+        confidence=confidence,
         source_documents=source_documents,
         citations=citations,
         chart=chart_json,
-        chart_type=result.get("chart_type"),
-        chart_reason=result.get("chart_reason"),
+        chart_type=None if abstained else result.get("chart_type"),
+        chart_reason=None if abstained else result.get("chart_reason"),
     )

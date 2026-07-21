@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -29,6 +29,7 @@ class Citation(BaseModel):
 
 class QueryResponse(BaseModel):
     answer: str
+    confidence: Literal["high", "medium", "low"]
     source_documents: list[SourceDocument]
     citations: list[Citation]
     chart: Optional[dict] = None

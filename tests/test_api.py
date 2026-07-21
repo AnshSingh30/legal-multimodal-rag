@@ -48,6 +48,7 @@ def test_query_sample_csv() -> None:
     assert query_response.status_code == 200
     query_body = query_response.json()
     assert query_body["answer"].strip() != ""
+    assert query_body["confidence"] == "high"
     assert len(query_body["source_documents"]) > 0
 
     # Citations must be grounded in the document we actually ingested and reference a real page.
@@ -56,3 +57,20 @@ def test_query_sample_csv() -> None:
         assert citation["doc_id"] == doc_id
         assert citation["page_number"] is not None
         assert citation["chunk_text"].strip() != ""
+
+
+# xfail: same broken OPENROUTER_API_KEY as test_query_sample_csv.
+@pytest.mark.xfail(raises=AuthenticationError, reason="OPENROUTER_API_KEY in .env is invalid/expired")
+def test_query_unrelated_question_abstains() -> None:
+    doc_id = _ingest_sample_csv()
+
+    query_response = client.post(
+        "/query",
+        json={"question": "What is the capital of France?", "doc_id": doc_id},
+    )
+    assert query_response.status_code == 200
+    query_body = query_response.json()
+    assert query_body["confidence"] in ("low", "medium")
+    assert query_body["answer"] != ""
+    assert query_body["citations"] == []
+    assert query_body["chart"] is None
