@@ -5,6 +5,7 @@ from typing import Optional
 
 from fastapi import FastAPI, Header, HTTPException, Query, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.cors import CORSMiddleware
 from langchain_core.documents import Document
 
 from rag.cache import get_cached_query, query_cache_key, set_cached_query
@@ -50,6 +51,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Legal Multi-Modal RAG API", lifespan=lifespan)
+
+# Comma-separated list of allowed frontend origins, e.g. for a deployed frontend.
+# Defaults cover the Next.js dev server (3000, plus 3001+ since `next dev` picks
+# the next free port when 3000 is already taken by something else on the machine).
+_default_cors_origins = ",".join(f"http://localhost:{p}" for p in range(3000, 3010))
+CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", _default_cors_origins).split(",")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _chunk_id(doc: Document) -> str:
