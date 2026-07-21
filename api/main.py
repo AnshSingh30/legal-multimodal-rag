@@ -1,7 +1,10 @@
+import os
 import pathlib
 import uuid
+from contextlib import asynccontextmanager
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Response, UploadFile
+from fastapi import FastAPI, Header, HTTPException, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from langchain_core.documents import Document
 
@@ -11,7 +14,9 @@ from rag.confidence import apply_confidence
 from rag.embedding import build_vectorstore
 from rag.generation import ask
 from rag.ingestion import smart_extract
+from rag.retrieval import score_retrieved_docs
 
+from api.audit import get_recent, init_audit_log, record_query
 from api.schemas import Citation, HealthResponse, IngestResponse, QueryRequest, QueryResponse, SourceDocument
 from api.state import vectorstore_state
 
@@ -19,8 +24,23 @@ UPLOAD_DIR = pathlib.Path("./uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 ALLOWED_EXTENSIONS = {".pdf", ".csv", ".xlsx", ".xls", ".sql", ".docx"}
+ADMIN_KEY = os.getenv("ADMIN_KEY")
 
-app = FastAPI(title="Legal Multi-Modal RAG API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_audit_log()
+    yield
+
+
+app = FastAPI(title="Legal Multi-Modal RAG API", lifespan=lifespan)
+
+
+def _chunk_id(doc: Document) -> str:
+    doc_id = doc.metadata.get("doc_id", "unknown")
+    page = doc.metadata.get("page", "?")
+    index = doc.metadata.get("chunk_index", doc.metadata.get("row_index", "?"))
+    return f"{doc_id}:{page}:{index}"
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -66,6 +86,16 @@ async def query(payload: QueryRequest, response: Response) -> QueryResponse:
     cached = await run_in_threadpool(get_cached_query, cache_key)
     if cached is not None:
         response.headers["X-Cache"] = "HIT"
+        await record_query(
+            query_text=payload.question,
+            doc_id=payload.doc_id,
+            retrieved_chunks=[],  # not recomputed on a cache hit — see cache_hit flag
+            final_answer=cached["answer"],
+            confidence=cached["confidence"],
+            citations=cached["citations"],
+            abstained=cached["confidence"] != "high",
+            cache_hit=True,
+        )
         return QueryResponse(**cached)
     response.headers["X-Cache"] = "MISS"
 
@@ -113,4 +143,31 @@ async def query(payload: QueryRequest, response: Response) -> QueryResponse:
         chart_reason=None if abstained else result.get("chart_reason"),
     )
     await run_in_threadpool(set_cached_query, cache_key, query_response.model_dump())
+
+    vectorstore = vectorstore_state.get_vectorstore()
+    doc_id_filter = {"doc_id": payload.doc_id} if payload.doc_id else None
+    scored_docs = await run_in_threadpool(
+        score_retrieved_docs, vectorstore, payload.question, result["source_documents"], doc_id_filter
+    )
+    await record_query(
+        query_text=payload.question,
+        doc_id=payload.doc_id,
+        # "score" here is a raw similarity distance (lower = more similar), not a 0-1 relevance score.
+        retrieved_chunks=[{"chunk_id": _chunk_id(doc), "score": score} for doc, score in scored_docs],
+        final_answer=final_answer,
+        confidence=confidence,
+        citations=[c.model_dump() for c in citations],
+        abstained=confidence != "high",
+        cache_hit=False,
+    )
+
     return query_response
+
+
+@app.get("/audit/recent")
+async def audit_recent(limit: int = 50, x_admin_key: Optional[str] = Header(default=None)) -> list[dict]:
+    if not ADMIN_KEY:
+        raise HTTPException(status_code=503, detail="Admin endpoint not configured (ADMIN_KEY not set).")
+    if x_admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Missing or invalid X-Admin-Key header.")
+    return await get_recent(limit)
