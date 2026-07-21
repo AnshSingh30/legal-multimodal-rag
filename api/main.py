@@ -1,10 +1,11 @@
 import pathlib
 import uuid
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from langchain_core.documents import Document
 
+from rag.cache import get_cached_query, query_cache_key, set_cached_query
 from rag.chunking import chunk_pages
 from rag.confidence import apply_confidence
 from rag.embedding import build_vectorstore
@@ -57,9 +58,16 @@ async def ingest(file: UploadFile) -> IngestResponse:
 
 
 @app.post("/query", response_model=QueryResponse)
-async def query(payload: QueryRequest) -> QueryResponse:
+async def query(payload: QueryRequest, response: Response) -> QueryResponse:
     if vectorstore_state.is_empty():
         raise HTTPException(status_code=400, detail="No documents have been ingested yet.")
+
+    cache_key = query_cache_key(payload.doc_id, payload.question)
+    cached = await run_in_threadpool(get_cached_query, cache_key)
+    if cached is not None:
+        response.headers["X-Cache"] = "HIT"
+        return QueryResponse(**cached)
+    response.headers["X-Cache"] = "MISS"
 
     retriever = vectorstore_state.get_retriever(doc_id=payload.doc_id)
 
@@ -95,7 +103,7 @@ async def query(payload: QueryRequest) -> QueryResponse:
     chart_fig = None if abstained else result.get("chart")
     chart_json = chart_fig.to_plotly_json() if chart_fig is not None else None
 
-    return QueryResponse(
+    query_response = QueryResponse(
         answer=final_answer,
         confidence=confidence,
         source_documents=source_documents,
@@ -104,3 +112,5 @@ async def query(payload: QueryRequest) -> QueryResponse:
         chart_type=None if abstained else result.get("chart_type"),
         chart_reason=None if abstained else result.get("chart_reason"),
     )
+    await run_in_threadpool(set_cached_query, cache_key, query_response.model_dump())
+    return query_response
