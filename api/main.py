@@ -1,10 +1,9 @@
 import os
 import pathlib
-import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, Header, HTTPException, Response, UploadFile
+from fastapi import FastAPI, Header, HTTPException, Query, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from langchain_core.documents import Document
 
@@ -15,9 +14,26 @@ from rag.embedding import build_vectorstore
 from rag.generation import ask
 from rag.ingestion import smart_extract
 from rag.retrieval import score_retrieved_docs
+from rag.versioning import (
+    compute_content_hash,
+    compute_doc_id,
+    diff_versions,
+    get_chunks_for_version,
+    get_latest_version,
+    list_versions,
+)
 
 from api.audit import get_recent, init_audit_log, record_query
-from api.schemas import Citation, HealthResponse, IngestResponse, QueryRequest, QueryResponse, SourceDocument
+from api.schemas import (
+    Citation,
+    DiffResponse,
+    HealthResponse,
+    IngestResponse,
+    QueryRequest,
+    QueryResponse,
+    SourceDocument,
+    VersionInfo,
+)
 from api.state import vectorstore_state
 
 UPLOAD_DIR = pathlib.Path("./uploads")
@@ -43,6 +59,24 @@ def _chunk_id(doc: Document) -> str:
     return f"{doc_id}:{page}:{index}"
 
 
+def _resolve_query_filter(doc_id: Optional[str], version: Optional[int]) -> tuple[Optional[dict], Optional[int]]:
+    """Returns (chroma_filter, resolved_version). If doc_id is given and no
+    version is specified, resolves to that document's latest version so
+    retrieval doesn't silently mix chunks across versions. Falls back to a
+    plain doc_id filter (no version constraint) if this doc_id has no
+    versioned chunks at all — e.g. it predates this feature."""
+    if not doc_id:
+        return None, None
+    if version is not None:
+        return {"$and": [{"doc_id": doc_id}, {"document_version": version}]}, version
+
+    vectorstore = vectorstore_state.get_vectorstore()
+    latest = get_latest_version(vectorstore, doc_id)
+    if latest == 0:
+        return {"doc_id": doc_id}, None
+    return {"$and": [{"doc_id": doc_id}, {"document_version": latest}]}, latest
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     return HealthResponse(status="ok")
@@ -61,20 +95,49 @@ async def ingest(file: UploadFile) -> IngestResponse:
     contents = await file.read()
     save_path.write_bytes(contents)
 
-    doc_id = uuid.uuid4().hex
+    doc_id = compute_doc_id(file.filename)
+    content_hash = compute_content_hash(contents)
+    vectorstore = vectorstore_state.get_vectorstore()
+    version = await run_in_threadpool(get_latest_version, vectorstore, doc_id) + 1
 
     def _ingest_and_index() -> list[Document]:
         pages = smart_extract(str(save_path))
         docs = chunk_pages(pages)
         for doc in docs:
             doc.metadata["doc_id"] = doc_id
+            doc.metadata["document_version"] = version
+            doc.metadata["content_hash"] = content_hash
         build_vectorstore(docs)
         return docs
 
     docs = await run_in_threadpool(_ingest_and_index)
     vectorstore_state.invalidate()
 
-    return IngestResponse(doc_id=doc_id, filename=file.filename, chunks_indexed=len(docs))
+    return IngestResponse(doc_id=doc_id, filename=file.filename, chunks_indexed=len(docs), document_version=version)
+
+
+@app.get("/documents/{doc_id}/versions", response_model=list[VersionInfo])
+async def document_versions(doc_id: str) -> list[dict]:
+    vectorstore = vectorstore_state.get_vectorstore()
+    versions = await run_in_threadpool(list_versions, vectorstore, doc_id)
+    if not versions:
+        raise HTTPException(status_code=404, detail=f"No versions found for doc_id '{doc_id}'.")
+    return versions
+
+
+@app.get("/documents/{doc_id}/diff", response_model=DiffResponse)
+async def document_diff(
+    doc_id: str, from_: int = Query(alias="from"), to: int = Query()
+) -> DiffResponse:
+    vectorstore = vectorstore_state.get_vectorstore()
+    from_chunks = await run_in_threadpool(get_chunks_for_version, vectorstore, doc_id, from_)
+    to_chunks = await run_in_threadpool(get_chunks_for_version, vectorstore, doc_id, to)
+    if not from_chunks:
+        raise HTTPException(status_code=404, detail=f"Version {from_} not found for doc_id '{doc_id}'.")
+    if not to_chunks:
+        raise HTTPException(status_code=404, detail=f"Version {to} not found for doc_id '{doc_id}'.")
+    entries = diff_versions(from_chunks, to_chunks)
+    return DiffResponse(doc_id=doc_id, from_version=from_, to_version=to, entries=entries)
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -82,7 +145,14 @@ async def query(payload: QueryRequest, response: Response) -> QueryResponse:
     if vectorstore_state.is_empty():
         raise HTTPException(status_code=400, detail="No documents have been ingested yet.")
 
-    cache_key = query_cache_key(payload.doc_id, payload.question)
+    doc_filter, resolved_version = await run_in_threadpool(
+        _resolve_query_filter, payload.doc_id, payload.document_version
+    )
+
+    # Cache key uses the *resolved* version, not payload.document_version (which may be
+    # None/"latest") — otherwise re-ingesting a new version while repeatedly asking for
+    # "latest" would keep serving the stale cached answer from the old version.
+    cache_key = query_cache_key(payload.doc_id, payload.question, resolved_version)
     cached = await run_in_threadpool(get_cached_query, cache_key)
     if cached is not None:
         response.headers["X-Cache"] = "HIT"
@@ -99,7 +169,7 @@ async def query(payload: QueryRequest, response: Response) -> QueryResponse:
         return QueryResponse(**cached)
     response.headers["X-Cache"] = "MISS"
 
-    retriever = vectorstore_state.get_retriever(doc_id=payload.doc_id)
+    retriever = vectorstore_state.get_retriever(filter=doc_filter)
 
     result = await run_in_threadpool(ask, payload.question, retriever)
 
@@ -145,9 +215,8 @@ async def query(payload: QueryRequest, response: Response) -> QueryResponse:
     await run_in_threadpool(set_cached_query, cache_key, query_response.model_dump())
 
     vectorstore = vectorstore_state.get_vectorstore()
-    doc_id_filter = {"doc_id": payload.doc_id} if payload.doc_id else None
     scored_docs = await run_in_threadpool(
-        score_retrieved_docs, vectorstore, payload.question, result["source_documents"], doc_id_filter
+        score_retrieved_docs, vectorstore, payload.question, result["source_documents"], doc_filter
     )
     await record_query(
         query_text=payload.question,

@@ -30,8 +30,12 @@ def _hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def query_cache_key(doc_id: Optional[str], question: str) -> str:
-    return "query:" + _hash(f"{doc_id or ''}|{question}")
+def query_cache_key(doc_id: Optional[str], question: str, version: Optional[int] = None) -> str:
+    """`version` must be the *resolved* version actually queried (not just
+    whatever the caller passed in, which may be None meaning "latest") —
+    otherwise re-ingesting a new version while repeatedly asking for "latest"
+    would keep serving a stale cached answer from the old version."""
+    return "query:" + _hash(f"{doc_id or ''}|{version if version is not None else ''}|{question}")
 
 
 def get_cached_query(key: str) -> Optional[dict]:
