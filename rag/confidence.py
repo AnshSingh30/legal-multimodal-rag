@@ -1,5 +1,8 @@
+import logging
 import math
 from typing import Literal
+
+logger = logging.getLogger(__name__)
 
 from rag._ragas_compat import ensure_ragas_importable
 
@@ -30,6 +33,7 @@ def score_faithfulness(question: str, answer: str, contexts: list[str]) -> float
     from ragas.embeddings import LangchainEmbeddingsWrapper
     from ragas.llms import LangchainLLMWrapper
     from ragas.metrics import faithfulness
+    from ragas.run_config import RunConfig
 
     from rag.embedding import embedder
     from rag.generation import _get_llm
@@ -44,9 +48,27 @@ def score_faithfulness(question: str, answer: str, contexts: list[str]) -> float
     llm_wrapper = LangchainLLMWrapper(_get_llm())
     emb_wrapper = LangchainEmbeddingsWrapper(embedder)
 
-    result = evaluate(dataset, metrics=[faithfulness], llm=llm_wrapper, embeddings=emb_wrapper, raise_exceptions=False)
+    # Faithfulness scoring itself makes further LLM calls (claim decomposition,
+    # then per-claim verification against context) on top of the ones ask()
+    # already made. RunConfig's 180s default timeout was observed timing out
+    # against a free-tier OpenRouter model on a perfectly grounded answer —
+    # raised here so a slow model doesn't get misread as a low-faithfulness one.
+    result = evaluate(
+        dataset, metrics=[faithfulness], llm=llm_wrapper, embeddings=emb_wrapper,
+        run_config=RunConfig(timeout=300), raise_exceptions=False,
+    )
     score = result["faithfulness"][0]
     if score is None or (isinstance(score, float) and math.isnan(score)):
+        # NaN covers both "0 statements extracted" (a legitimately trivial answer)
+        # and a swallowed internal error/timeout (raise_exceptions=False hides
+        # which). Treating it as 0.0/"low" is the safe default for a legal QA
+        # tool, but check server logs for a ragas "Exception raised in Job[...]"
+        # line before trusting an all-"low" run as a real faithfulness signal.
+        logger.warning(
+            "score_faithfulness got NaN/None for question=%r — treating as 0.0. "
+            "Check logs above for a ragas internal exception (e.g. a timeout) "
+            "before assuming this reflects real low faithfulness.", question
+        )
         return 0.0
     return float(score)
 
