@@ -4,11 +4,11 @@ import os, pathlib
 
 load_dotenv()   # FIX 3 — must run before any pipeline import reads env vars
 
-from pipeline.ingest import smart_extract
-from pipeline.chunker import chunk_pages
-from pipeline.embedder import build_vectorstore, load_vectorstore
-from pipeline.retriever import build_retriever
-from pipeline.generator import ask
+from rag.ingestion import smart_extract
+from rag.chunking import chunk_pages
+from rag.embedding import build_vectorstore, load_vectorstore
+from rag.retrieval import build_retriever
+from rag.generation import ask
 
 UPLOAD_DIR = pathlib.Path("./uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
