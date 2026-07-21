@@ -33,11 +33,26 @@ class Citation(BaseModel):
     method: Optional[str] = None
 
 
+class RetrievalTraceEntry(BaseModel):
+    chunk_id: str
+    source: str
+    page: Any
+    # Raw similarity distance (lower = more similar) — see rag/retrieval.py's
+    # score_retrieved_docs docstring for why this isn't a normalized 0-1 score.
+    score: Optional[float] = None
+    # Retrieval in this codebase is single-path dense MMR search — there is no
+    # sparse/hybrid retriever to distinguish between (despite what the project
+    # brief assumed). This is reported as-is rather than fabricating a split
+    # that doesn't exist.
+    retrieval_method: str = "dense (MMR)"
+
+
 class QueryResponse(BaseModel):
     answer: str
     confidence: Literal["high", "medium", "low"]
     source_documents: list[SourceDocument]
     citations: list[Citation]
+    retrieval_trace: list[RetrievalTraceEntry] = []
     chart: Optional[dict] = None
     chart_type: Optional[str] = None
     chart_reason: Optional[str] = None

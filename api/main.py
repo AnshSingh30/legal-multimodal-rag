@@ -34,6 +34,7 @@ from api.schemas import (
     IngestResponse,
     QueryRequest,
     QueryResponse,
+    RetrievalTraceEntry,
     SourceDocument,
     VersionInfo,
 )
@@ -242,26 +243,37 @@ async def query(payload: QueryRequest, response: Response) -> QueryResponse:
     chart_fig = None if abstained else result.get("chart")
     chart_json = chart_fig.to_plotly_json() if chart_fig is not None else None
 
+    vectorstore = vectorstore_state.get_vectorstore()
+    scored_docs = await run_in_threadpool(
+        score_retrieved_docs, vectorstore, payload.question, result["source_documents"], doc_filter
+    )
+    retrieval_trace = [
+        RetrievalTraceEntry(
+            chunk_id=_chunk_id(doc),
+            source=doc.metadata.get("source", "unknown"),
+            page=doc.metadata.get("page", "?"),
+            score=score,
+        )
+        for doc, score in scored_docs
+    ]
+
     query_response = QueryResponse(
         answer=final_answer,
         confidence=confidence,
         source_documents=source_documents,
         citations=citations,
+        retrieval_trace=retrieval_trace,
         chart=chart_json,
         chart_type=None if abstained else result.get("chart_type"),
         chart_reason=None if abstained else result.get("chart_reason"),
     )
     await run_in_threadpool(set_cached_query, cache_key, query_response.model_dump())
 
-    vectorstore = vectorstore_state.get_vectorstore()
-    scored_docs = await run_in_threadpool(
-        score_retrieved_docs, vectorstore, payload.question, result["source_documents"], doc_filter
-    )
     await record_query(
         query_text=payload.question,
         doc_id=payload.doc_id,
         # "score" here is a raw similarity distance (lower = more similar), not a 0-1 relevance score.
-        retrieved_chunks=[{"chunk_id": _chunk_id(doc), "score": score} for doc, score in scored_docs],
+        retrieved_chunks=[{"chunk_id": t.chunk_id, "score": t.score} for t in retrieval_trace],
         final_answer=final_answer,
         confidence=confidence,
         citations=[c.model_dump() for c in citations],

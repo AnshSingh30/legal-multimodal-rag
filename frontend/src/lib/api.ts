@@ -1,4 +1,4 @@
-import type { IngestResponse, QueryRequest, QueryResponse } from "./types";
+import type { DiffResponse, IngestResponse, QueryRequest, QueryResponse, VersionInfo } from "./types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -44,6 +44,24 @@ export async function queryDocument(payload: QueryRequest): Promise<QueryRespons
     body: JSON.stringify(payload),
   });
 
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorDetail(response));
+  }
+  return response.json();
+}
+
+export async function fetchVersions(docId: string): Promise<VersionInfo[]> {
+  const response = await fetch(`${API_BASE_URL}/documents/${docId}/versions`);
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorDetail(response));
+  }
+  return response.json();
+}
+
+export async function fetchDiff(docId: string, from: number, to: number): Promise<DiffResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/documents/${docId}/diff?from=${from}&to=${to}`,
+  );
   if (!response.ok) {
     throw new ApiError(response.status, await parseErrorDetail(response));
   }

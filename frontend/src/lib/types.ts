@@ -29,11 +29,20 @@ export interface Citation {
 
 export type Confidence = "high" | "medium" | "low";
 
+export interface RetrievalTraceEntry {
+  chunk_id: string;
+  source: string;
+  page: unknown;
+  score: number | null;
+  retrieval_method: string;
+}
+
 export interface QueryResponse {
   answer: string;
   confidence: Confidence;
   source_documents: SourceDocument[];
   citations: Citation[];
+  retrieval_trace: RetrievalTraceEntry[];
   chart: Record<string, unknown> | null;
   chart_type: string | null;
   chart_reason: string | null;

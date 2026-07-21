@@ -2,34 +2,35 @@
 
 import { useState } from "react";
 import { ApiError, queryDocument } from "@/lib/api";
-import { stripCitationTags } from "@/lib/format";
 import type { QueryResponse } from "@/lib/types";
-import ConfidenceBadge from "./ConfidenceBadge";
-import CitationList from "./CitationList";
 
-type Status = "idle" | "asking" | "done" | "error";
+type Status = "idle" | "asking" | "error";
 
 export default function QAPanel({
   docId,
+  documentVersion,
   onResult,
 }: {
   docId: string | null;
-  onResult?: (result: QueryResponse) => void;
+  documentVersion?: number | null;
+  onResult: (question: string, result: QueryResponse) => void;
 }) {
   const [question, setQuestion] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<QueryResponse | null>(null);
 
   const handleAsk = async () => {
     if (!question.trim() || status === "asking") return;
     setStatus("asking");
     setError(null);
     try {
-      const response = await queryDocument({ question, doc_id: docId });
-      setResult(response);
-      setStatus("done");
-      onResult?.(response);
+      const response = await queryDocument({
+        question,
+        doc_id: docId,
+        document_version: documentVersion ?? null,
+      });
+      onResult(question, response);
+      setStatus("idle");
     } catch (err) {
       setStatus("error");
       setError(err instanceof ApiError ? err.message : "Failed to get an answer.");
@@ -37,7 +38,7 @@ export default function QAPanel({
   };
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <div className="flex gap-2">
         <input
           type="text"
@@ -67,19 +68,6 @@ export default function QAPanel({
 
       {status === "error" && error && (
         <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
-      )}
-
-      {status === "done" && result && (
-        <div className="flex flex-col gap-3 rounded-lg border border-black/10 dark:border-white/10 p-4">
-          <ConfidenceBadge confidence={result.confidence} />
-          <p className="whitespace-pre-wrap text-sm">{stripCitationTags(result.answer)}</p>
-          <div>
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-black/50 dark:text-white/50">
-              Citations
-            </h3>
-            <CitationList citations={result.citations} />
-          </div>
-        </div>
       )}
     </div>
   );
