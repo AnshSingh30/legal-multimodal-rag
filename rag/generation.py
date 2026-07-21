@@ -38,7 +38,7 @@ SYSTEM_PROMPT = f"""You are a highly precise legal document QA assistant.
 CRITICAL RULES:
 1. Answer ONLY using the facts from the provided context below.
 2. If the context does not contain enough information to answer the question, you must explicitly say: "{NO_ANSWER_PHRASE}" Do not guess or use outside knowledge.
-3. For every claim you make, you MUST attach a citation using the exact format [Citation: doc_id=<doc_id>, page=<page>], copying the <doc_id> and <page> values exactly from the context block that supports the claim. Never invent a doc_id or page value.
+3. For every claim you make, you MUST attach a citation using the exact format [Citation: doc_id=<doc_id>, page=<page>] — ONLY those two fields, nothing else inside the brackets — copying the <doc_id> and <page> values exactly from the context block that supports the claim (do not include "source" in the citation). Never invent a doc_id or page value.
 4. Never extrapolate, hallucinate, or add facts not explicitly present in the documents.
 
 Before answering, briefly state which facts from the context support your answer."""
@@ -48,12 +48,27 @@ prompt = ChatPromptTemplate.from_messages([
     ("human", "Context:\n{context}\n\nQuestion: {question}")
 ])
 
+UNKNOWN_DOC_ID = "unknown"
+UNKNOWN_PAGE = "?"
+
+
+def _citation_key(doc: Document) -> tuple[str, str]:
+    """The (doc_id, page) pair a valid citation for this chunk must match —
+    used both when rendering the context (so the LLM sees the same values)
+    and when validating citations (so a chunk missing a page, e.g. tabular
+    data, still has a matchable, consistent key instead of silently never
+    validating)."""
+    return (
+        str(doc.metadata.get("doc_id", UNKNOWN_DOC_ID)),
+        str(doc.metadata.get("page", UNKNOWN_PAGE)),
+    )
+
+
 def format_docs(docs: list[Document]) -> str:
     parts = []
     for d in docs:
-        doc_id = d.metadata.get("doc_id", "unknown")
-        pg = d.metadata.get("page", "?")
-        src = d.metadata.get("source", "unknown")
+        doc_id, pg = _citation_key(d)
+        src = d.metadata.get("source", UNKNOWN_DOC_ID)
         parts.append(f"[doc_id={doc_id}, page={pg}, source={src}]\n{d.page_content}")
     return "\n\n---\n\n".join(parts)
 
@@ -109,7 +124,7 @@ Corrected Answer:"""
 
 regen_prompt = ChatPromptTemplate.from_template(REGEN_PROMPT)
 
-_CITATION_RE = re.compile(r"\[Citation:\s*doc_id=([^,\]]+),\s*page=([^\]]+)\]")
+_CITATION_RE = re.compile(r"\[Citation:\s*doc_id=([^,\]]+),\s*page=([^,\]]+)(?:,[^\]]*)?\]")
 
 
 def _extract_citations(answer: str) -> set[tuple[str, str]]:
@@ -127,7 +142,7 @@ def ask(question: str, retriever: BaseRetriever) -> dict[str, Any]:
     chain = build_chain(retriever)
     # Retrieve docs separately so we can return them alongside the answer
     docs = retriever.invoke(question)
-    valid_keys = {(str(d.metadata.get("doc_id", "")), str(d.metadata.get("page", ""))) for d in docs}
+    valid_keys = {_citation_key(d) for d in docs}
 
     # 1. Generate Initial Answer
     initial_answer = chain.invoke(question)
@@ -156,10 +171,7 @@ def ask(question: str, retriever: BaseRetriever) -> dict[str, Any]:
 
     if _is_grounded(final_answer, valid_keys):
         cited_keys = _extract_citations(final_answer)
-        citations = [
-            d for d in docs
-            if (str(d.metadata.get("doc_id", "")), str(d.metadata.get("page", ""))) in cited_keys
-        ]
+        citations = [d for d in docs if _citation_key(d) in cited_keys]
     else:
         final_answer = NO_CITATION_FALLBACK
         citations = []

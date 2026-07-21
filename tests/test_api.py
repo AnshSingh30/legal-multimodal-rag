@@ -1,8 +1,6 @@
 import pathlib
 
-import pytest
 from fastapi.testclient import TestClient
-from openai import AuthenticationError
 
 from api.main import app
 
@@ -34,10 +32,6 @@ def test_ingest_sample_csv() -> None:
     assert doc_id
 
 
-# xfail: OPENROUTER_API_KEY in .env is currently rejected by OpenRouter
-# (401 "User not found"), independent of this code. Remove xfail once the
-# key is rotated to a valid one and confirm this passes end-to-end.
-@pytest.mark.xfail(raises=AuthenticationError, reason="OPENROUTER_API_KEY in .env is invalid/expired")
 def test_query_sample_csv() -> None:
     doc_id = _ingest_sample_csv()
 
@@ -59,8 +53,6 @@ def test_query_sample_csv() -> None:
         assert citation["chunk_text"].strip() != ""
 
 
-# xfail: same broken OPENROUTER_API_KEY as test_query_sample_csv.
-@pytest.mark.xfail(raises=AuthenticationError, reason="OPENROUTER_API_KEY in .env is invalid/expired")
 def test_query_unrelated_question_abstains() -> None:
     doc_id = _ingest_sample_csv()
 
