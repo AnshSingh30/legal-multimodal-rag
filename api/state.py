@@ -25,10 +25,9 @@ class VectorStoreState:
         vectorstore = self.get_vectorstore()
         return vectorstore._collection.count() == 0
 
-    def get_retriever(self, doc_id: Optional[str] = None) -> BaseRetriever:
+    def get_retriever(self, filter: Optional[dict] = None) -> BaseRetriever:
         vectorstore = self.get_vectorstore()
-        filter_ = {"doc_id": doc_id} if doc_id else None
-        return build_retriever(vectorstore, filter=filter_)
+        return build_retriever(vectorstore, filter=filter)
 
     def invalidate(self) -> None:
         """Force the next get_vectorstore() call to reload from disk, picking up newly ingested chunks."""

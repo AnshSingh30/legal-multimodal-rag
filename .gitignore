@@ -11,3 +11,4 @@ build/
 uploaded_docs/
 uploads/*
 !uploads/.gitkeep
+dump.rdb

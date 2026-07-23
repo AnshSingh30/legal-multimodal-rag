@@ -2,14 +2,10 @@ import pathlib
 
 from fastapi.testclient import TestClient
 
-from api.main import app
-
-client = TestClient(app)
-
 SAMPLE_CSV = pathlib.Path(__file__).parent.parent / "test_sample.csv"
 
 
-def _ingest_sample_csv() -> str:
+def _ingest_sample_csv(client: TestClient) -> str:
     with open(SAMPLE_CSV, "rb") as f:
         response = client.post(
             "/ingest",
@@ -21,19 +17,19 @@ def _ingest_sample_csv() -> str:
     return body["doc_id"]
 
 
-def test_health() -> None:
+def test_health(client: TestClient) -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
 
-def test_ingest_sample_csv() -> None:
-    doc_id = _ingest_sample_csv()
+def test_ingest_sample_csv(client: TestClient) -> None:
+    doc_id = _ingest_sample_csv(client)
     assert doc_id
 
 
-def test_query_sample_csv() -> None:
-    doc_id = _ingest_sample_csv()
+def test_query_sample_csv(client: TestClient) -> None:
+    doc_id = _ingest_sample_csv(client)
 
     query_response = client.post(
         "/query",
@@ -53,8 +49,8 @@ def test_query_sample_csv() -> None:
         assert citation["chunk_text"].strip() != ""
 
 
-def test_query_unrelated_question_abstains() -> None:
-    doc_id = _ingest_sample_csv()
+def test_query_unrelated_question_abstains(client: TestClient) -> None:
+    doc_id = _ingest_sample_csv(client)
 
     query_response = client.post(
         "/query",
